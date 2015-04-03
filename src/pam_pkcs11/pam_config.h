@@ -35,6 +35,7 @@ struct configuration_st {
 	int use_authok;
 	int card_only;
 	int wait_for_card;
+	int slack_validation;
 	const char *pkcs11_module;
 	const char *pkcs11_modulepath;
 	const char **screen_savers;

@@ -582,38 +582,59 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 
       /* verify certificate (date, signature, CRL, ...) */
       rv = verify_certificate(x509,&configuration->policy);
-      if (rv < 0) {
-        ERR1("verify_certificate() failed: %s", get_error());
+      if (rv != 0) {
+        ERR3("verify_certificate() on %d of %d failed: %s", i+1, ncert, get_error());
+
         if (!configuration->quiet) {
           pam_syslog(pamh, LOG_ERR,
-                   "verify_certificate() failed: %s", get_error());
-			switch (rv) {
-				case -2: // X509_V_ERR_CERT_HAS_EXPIRED:
-					pam_prompt(pamh, PAM_ERROR_MSG , NULL,
-						_("Error 2324: Certificate has expired"));
-					break;
-				case -3: // X509_V_ERR_CERT_NOT_YET_VALID:
-					pam_prompt(pamh, PAM_ERROR_MSG , NULL,
-						_("Error 2326: Certificate not yet valid"));
-					break;
-				case -4: // X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
-					pam_prompt(pamh, PAM_ERROR_MSG , NULL,
-						_("Error 2328: Certificate signature invalid"));
-					break;
-				default:
-					pam_prompt(pamh, PAM_ERROR_MSG , NULL,
-						_("Error 2330: Certificate invalid"));
-					break;
-			}
-			sleep(configuration->err_display_time);
-		}
-        continue; /* try next certificate */
-      } else if (rv != 1) {
-        ERR1("verify_certificate() failed: %s", get_error());
-        continue; /* try next certificate */
+                   "verify_certificate() of cert %d failed: %s", i+1, get_error());
+	  // NSS does currently not provide the -2 .. -4 error values; only
+	  // OpenSSL does. So in NSS its case they are all collated into '1',
+          // indistinghuisbale from an internal error.
+          switch (rv) {
+		case -2: // X509_V_ERR_CERT_HAS_EXPIRED:
+			pam_prompt(pamh, PAM_ERROR_MSG , NULL, _("Error 2324: Certificate has expired"));
+			break;
+		case -3: // X509_V_ERR_CERT_NOT_YET_VALID:
+			pam_prompt(pamh, PAM_ERROR_MSG , NULL, _("Error 2326: Certificate not yet valid"));
+			break;
+		case -4: // X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY:
+			pam_prompt(pamh, PAM_ERROR_MSG , NULL, _("Error 2328: Certificate signature invalid"));
+			break;
+		default: // Internal error (OpenSSL) or any validaiton error (NSS).
+#ifdef HAVE_NSS
+			pam_prompt(pamh, PAM_ERROR_MSG , NULL, _("Error 2330: Internal error or certificate invalid"));
+#else
+			pam_prompt(pamh, PAM_ERROR_MSG , NULL, _("Error 2330: Certificate invalid"));
+#endif
+			break;
+	  }
+	  sleep(configuration->err_display_time);
+#ifdef HAVE_NSS
+	// In NSS we cannot distinguish between a validation error and someting
+	// malformed. So we ignore any rv == 0 errors.
+#else
+	if (rv == 0) {
+		// rather than a natural error w.r.t. to the validity
+		// of the certificate; we got passed up an internal 
+		// openSSL error which we did not anticipate.
+		// Abort further validation.
+		unsigned long err = ERR_get_error();
+		ERR2("   OpenSSL error: %s(0x%x)", ERR_error_string(err,NULL), err);
+
+ 		if (configuration->slack_validation == 0) {
+			if (ncert != i+1)
+				ERR1("   and aborting scan of remaining %d certificate(s).", ncert-i-1);
+			goto auth_failed_nopw;
+		};
+	}
+#endif
       }
+      continue; /* try next certificate */
+    } // if there is an error in the certificate.
 
     /* CA and CRL verified, now check/find user */
+    DBG1("Certificate #%d passed validation of CA, signature and CRL.", i + 1);
 
     if ( is_spaced_str(user) ) {
       /*
@@ -668,7 +689,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
     } /* if is_spaced string */
   } /* for (i=0; i<ncerts; i++) */
 
-  /* now myCert points to our found certificate or null if no user found */
+  /* now chosen_cert points to our *last* found acceptable certificate or null if no user found */
   if (!chosen_cert) {
     ERR("no valid certificate which meets all requirements found");
 		if (!configuration->quiet) {
