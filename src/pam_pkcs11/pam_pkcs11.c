@@ -72,7 +72,7 @@ static int is_spaced_str(const char *str) {
 /*
  * implement pam utilities for older versions of pam.
  */
-static int pam_prompt(pam_handle_t *pamh, int style, char **response, char *fmt, ...)
+int pam_prompt(const pam_handle_t *pamh, int style, char **response, const char *fmt, ...)
 {
   int rv;
   struct pam_conv *conv;
@@ -120,6 +120,35 @@ pam_syslog(pam_handle_t *pamh, int priority, const char *fmt, ...)
 }
 #endif
 
+static int populate_env_var(struct configuration_st *configuration, pam_handle_t *pamh, const char * label, const char * val) {
+  /* enough space to hold an issuer DN - see setenv(1) and ARG_MAX, 
+   * MAX_ARG_PAGES as to why this cannot be easily set from limits.h
+   */
+  int len = strlen(label) + 1 + strlen(val) +1; /* label=val\0 */
+  char env_temp[2 * 1024] = "";
+  int rv;
+
+  if (len > (int)((sizeof(env_temp) - 1))) {
+    ERR1("Value of label %s too long to put in environment.", label);
+    if (!configuration->quiet)
+      pam_syslog(pamh, LOG_ERR, "Value of label %s too long to put in environment.",
+	label);
+      return PAM_AUTH_ERR;
+  }
+  snprintf(env_temp, sizeof(env_temp) - 1,
+	   "%s=%s",label,val);
+
+  rv = pam_putenv(pamh, env_temp);
+  if (rv != PAM_SUCCESS) {
+    ERR2("could not put token %s in environment: %s", label, pam_strerror(pamh, rv));
+    if (!configuration->quiet)
+      pam_syslog(pamh, LOG_ERR, "could not put token %s in environment: %s", 
+	label, pam_strerror(pamh, rv));
+      return PAM_AUTH_ERR;
+  }
+
+  return PAM_SUCCESS;
+}
 
 /*
  * Gets the users password. Depending whether it was already asked, either
@@ -194,8 +223,6 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
   unsigned char random_value[128];
   unsigned char *signature;
   unsigned long signature_length;
-  /* enough space to hold an issuer DN */
-  char env_temp[256] = "";
   char **issuer, **serial;
   const char *login_token_name = NULL;
 
@@ -719,66 +746,25 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
       DBG("Skipping signature check");
   }
 
-  /*
-   * fill in the environment variables.
+  /* fill in the environment variables.
    */
-  snprintf(env_temp, sizeof(env_temp) - 1,
-	   "PKCS11_LOGIN_TOKEN_NAME=%.*s",
-	   (int)((sizeof(env_temp) - 1) - strlen("PKCS11_LOGIN_TOKEN_NAME=")),
-	   get_slot_tokenlabel(ph));
-  rv = pam_putenv(pamh, env_temp);
-
-  if (rv != PAM_SUCCESS) {
-    ERR1("could not put token name in environment: %s",
-         pam_strerror(pamh, rv));
-    if (!configuration->quiet)
-      pam_syslog(pamh, LOG_ERR, "could not put token name in environment: %s",
-           pam_strerror(pamh, rv));
-  }
+  rv = populate_env_var(configuration, pamh, "PKCS11_LOGIN_TOKEN_NAME", get_slot_tokenlabel(ph));
+  if (rv != PAM_SUCCESS)
+	return rv;
 
   issuer = cert_info((X509 *)get_X509_certificate(chosen_cert), CERT_ISSUER,
                      ALGORITHM_NULL);
-  if (issuer) {
-    snprintf(env_temp, sizeof(env_temp) - 1,
-	   "PKCS11_LOGIN_CERT_ISSUER=%.*s",
-	   (int)((sizeof(env_temp) - 1) - strlen("PKCS11_LOGIN_CERT_ISSUER=")),
-	   issuer[0]);
-    rv = pam_putenv(pamh, env_temp);
-  } else {
-    ERR("couldn't get certificate issuer.");
-    if (!configuration->quiet)
-      pam_syslog(pamh, LOG_ERR, "couldn't get certificate issuer.");
-  }
 
-  if (rv != PAM_SUCCESS) {
-    ERR1("could not put cert issuer in environment: %s",
-         pam_strerror(pamh, rv));
-    if (!configuration->quiet)
-      pam_syslog(pamh, LOG_ERR, "could not put cert issuer in environment: %s",
-           pam_strerror(pamh, rv));
-  }
+  rv = populate_env_var(configuration, pamh, "PKCS11_LOGIN_CERT_ISSUER", issuer[0]);
+  if (rv != PAM_SUCCESS)
+	return rv; // We used to ignore this error.
 
   serial = cert_info((X509 *)get_X509_certificate(chosen_cert), CERT_SERIAL,
                      ALGORITHM_NULL);
-  if (serial) {
-    snprintf(env_temp, sizeof(env_temp) - 1,
-	   "PKCS11_LOGIN_CERT_SERIAL=%.*s",
-	   (int)((sizeof(env_temp) - 1) - strlen("PKCS11_LOGIN_CERT_SERIAL=")),
-	   serial[0]);
-    rv = pam_putenv(pamh, env_temp);
-  } else {
-    ERR("couldn't get certificate serial number.");
-    if (!configuration->quiet)
-      pam_syslog(pamh, LOG_ERR, "couldn't get certificate serial number.");
-  }
 
-  if (rv != PAM_SUCCESS) {
-    ERR1("could not put cert serial in environment: %s",
-         pam_strerror(pamh, rv));
-    if (!configuration->quiet)
-      pam_syslog(pamh, LOG_ERR, "could not put cert serial in environment: %s",
-           pam_strerror(pamh, rv));
-  }
+  rv = populate_env_var(configuration, pamh, "PKCS11_LOGIN_CERT_SERIAL", serial[0]);
+  if (rv != PAM_SUCCESS)
+	return rv; // We used to ignore this error.
 
   /* unload mapper modules */
   unload_mappers();
