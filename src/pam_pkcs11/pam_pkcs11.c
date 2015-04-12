@@ -72,7 +72,7 @@ static int is_spaced_str(const char *str) {
 /*
  * implement pam utilities for older versions of pam.
  */
-static int pam_prompt(pam_handle_t *pamh, int style, char **response, char *fmt, ...)
+int pam_prompt(const pam_handle_t *pamh, int style, char **response, const char *fmt, ...)
 {
   int rv;
   struct pam_conv *conv;
@@ -216,12 +216,12 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 
   /* Either slot_description or slot_num, but not both, needs to be used */
   if ((configuration->slot_description != NULL && configuration->slot_num != -1) || (configuration->slot_description == NULL && configuration->slot_num == -1)) {
-	ERR("Error setting configuration parameters");
+	ERR("Error setting configuration parameters (no slot numbers or slot descriptions found)");
 	return PAM_AUTHINFO_UNAVAIL;
   }
 
   /* fail if we are using a remote server
-   * local login: DISPLAY=:0
+   * local login: DISPLAY=:0 (linux) or a <path>:0 (Solaris, OSX)
    * XDMCP login: DISPLAY=host:0 */
   {
 	  char *display = getenv("DISPLAY");
@@ -229,7 +229,7 @@ PAM_EXTERN int pam_sm_authenticate(pam_handle_t *pamh, int flags, int argc, cons
 	  if (display)
 	  {
 		  if (strncmp(display, "localhost:", 10) != 0 && (display[0] != ':')
-			  && (display[0] != '\0')) {
+			  && (display[0] != '\0' && display[0] != '/')) {
 			  ERR1("Remote login (from %s) is not (yet) supported", display);
 			  pam_syslog(pamh, LOG_ERR,
 				  "Remote login (from %s) is not (yet) supported", display);
