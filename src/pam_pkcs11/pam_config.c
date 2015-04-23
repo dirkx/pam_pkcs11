@@ -46,6 +46,7 @@ struct configuration_st configuration = {
         0,				/* int use_authok; */
         0,				/* int card_only; */
         0,				/* int wait_for_card; */
+	0,				/* int slack_validation; */
         "default", 			/* const char *pkcs11_module; */
         CONFDIR "/pkcs11_module.so",/* const char *pkcs11_module_path; */
         NULL,                           /* screen savers */
@@ -77,6 +78,7 @@ static void display_config (void) {
         DBG1("use_authok %d", configuration.use_authok);
         DBG1("card_only %d", configuration.card_only);
         DBG1("wait_for_card %d", configuration.wait_for_card);
+        DBG1("slack_validation %d", configuration.slack_validation);
         DBG1("pkcs11_module %s",configuration.pkcs11_module);
         DBG1("pkcs11_modulepath %s",configuration.pkcs11_modulepath);
         DBG1("slot_description %s",configuration.slot_description);
@@ -141,6 +143,8 @@ static void parse_config_file(void) {
 	    scconf_get_bool(root,"card_only",configuration.card_only);
 	configuration.wait_for_card =
 	    scconf_get_bool(root,"wait_for_card",configuration.wait_for_card);
+	configuration.slack_validation =
+	    scconf_get_bool(root,"slack_validation",configuration.slack_validation);
 	configuration.pkcs11_module = ( char * )
 	    scconf_get_str(root,"use_pkcs11_module",configuration.pkcs11_module);
 	/* search pkcs11 module options */
@@ -268,6 +272,10 @@ struct configuration_st *pk_configure( int argc, const char **argv ) {
 	   }
     	   if (strcmp("wait_for_card", argv[i]) == 0) {
       		configuration.wait_for_card = 1;
+		continue;
+	   }
+    	   if (strcmp("slack_validation", argv[i]) == 0) {
+      		configuration.slack_validation = 1;
 		continue;
 	   }
     	   if (strcmp("dont_wait_for_card", argv[i]) == 0) {
